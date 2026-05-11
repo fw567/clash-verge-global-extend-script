@@ -1,8 +1,6 @@
 function main(config) {
-  // 1. 填充 rule-provider (防泄露域名集)
-  if (!config['rule-providers']) {
-    config['rule-providers'] = {};
-  }
+  // 1. 规则集配置保持不变
+  if (!config['rule-providers']) config['rule-providers'] = {};
   config['rule-providers']['prevent_dns_leak'] = {
     type: "http",
     interval: 86400,
@@ -11,52 +9,50 @@ function main(config) {
     url: "https://raw.githubusercontent.com/xishang0128/rules/main/clash%20or%20stash/prevent_dns_leak/prevent_dns_leak_domain.list"
   };
 
-  // 2. 填充规则：自动寻找 MATCH 组并将防泄露规则置顶
   const matchRule = config.rules.find(rule => rule.startsWith("MATCH"));
   const proxyName = matchRule ? matchRule.split(",").pop() : null;
   if (proxyName) {
-    // 强制让防泄露列表里的域名走代理组
     config.rules.unshift(`RULE-SET,prevent_dns_leak,${proxyName}`);
   }
 
-  // 3. 核心 DNS 进阶配置 (覆盖原有的简单修改)
+  // 2. DNS 进阶配置：使用 nameserver-policy 主导分流
   config.dns = {
     'enable': true,
     'enhanced-mode': 'fake-ip',
     'fake-ip-range': '198.18.0.1/16',
-    'ipv6': false, // 彻底禁用 IPv6 解析
-    'prefer-h3': true, // 开启 HTTP/3 优化
+    'ipv6': false,
+    'prefer-h3': true,
     'default-nameserver': ['223.5.5.5', '119.29.29.29'],
-    // 基础 DNS：默认全部走国外加密 DoH，确保未知域名不泄露
+    
+    // 默认 DNS：作为兜底，走代理远端解析
     'nameserver': [
-      'https://dns.google/dns-query',
-      'https://1.1.1.1/dns-query'
+      'https://dns.google/dns-query#proxy',
+      'https://1.1.1.1/dns-query#proxy'
     ],
-    // 策略分流：只有明确的中国域名，才允许走国内 DNS
+
+    // 精准路由策略 (取代被动的 fallback-filter 逻辑)
     'nameserver-policy': {
+      // 明确是国内的走国内解析
       'geosite:cn': [
         'https://dns.alidns.com/dns-query',
         'https://doh.pub/dns-query'
+      ],
+      // 明确是被墙的域名，强制只走代理端解析，不经过任何本地 DNS
+      'geosite:gfw,geolocation-!cn': [
+        'https://dns.google/dns-query#proxy',
+        'https://1.1.1.1/dns-query#proxy'
       ]
     },
-    // 强制过滤逻辑：防止国内 DNS 抢答国外域名
+
+    // 虽然有了 policy，但 fallback-filter 依然建议保留作为最后的 IP 审计手段
     'fallback-filter': {
       'geoip': true,
       'geoip-code': 'CN',
-      'geosite': ['gfw'],
       'ipmask': ['240.0.0.0/4']
     },
-    'fake-ip-filter': [
-      '*.lan',
-      'localhost.ptlogin2.qq.com',
-      '+.stun.*.*',
-      '+.stun.*.*.*',
-      '+.msftconnecttest.com',
-      '+.msftncsi.com'
-    ]
+    'fake-ip-filter': ['*.lan', 'localhost.ptlogin2.qq.com', '+.stun.*.*', '+.msftconnecttest.com']
   };
 
-  // 4. 配置流量嗅探 (Sniffer)
   config.sniffer = {
     'enable': true,
     'sniff': {
