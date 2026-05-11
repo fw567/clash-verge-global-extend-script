@@ -1,28 +1,25 @@
 export default function main(config) {
-  // 1. 深度重置 DNS 模块
+  // 1. DNS 核心配置
   config.dns = {
     'enable': true,
     'enhanced-mode': 'fake-ip',
     'fake-ip-range': '198.18.0.1/16',
-    'ipv6': false, // 彻底禁用 IPv6 是防泄露的前提
+    'ipv6': false, // 告诉内核不解析 IPv6 地址
     'prefer-h3': true,
-    'default-nameserver': [
-      '223.5.5.5',
-      '119.29.29.29'
-    ],
-    // 基础 DNS 设置：默认全部走国外加密 DoH，确保未知域名不泄露给运营商
+    'default-nameserver': ['223.5.5.5', '119.29.29.29'],
+    // 默认 DNS 全部走代理端的加密通道
     'nameserver': [
       'https://dns.google/dns-query',
       'https://1.1.1.1/dns-query'
     ],
-    // 策略分流：只有明确的中国域名，才允许通过国内 DNS 解析，保证访问速度
+    // 只有命中中国域名列表，才允许走国内 DoH
     'nameserver-policy': {
       'geosite:cn': [
         'https://dns.alidns.com/dns-query',
         'https://doh.pub/dns-query'
       ]
     },
-    // 强制过滤逻辑：防止国内 DNS 抢答国外域名
+    // 严格过滤器：防止任何国内 DNS 污染或抢答国外域名
     'fallback-filter': {
       'geoip': true,
       'geoip-code': 'CN',
@@ -39,8 +36,7 @@ export default function main(config) {
     ]
   };
 
-  // 2. 配置流量嗅探 (Sniffer)
-  // 识别那些直接连 IP 地址的流氓流量，并还原为域名进行规则匹配
+  // 2. 流量嗅探 (Sniffer) - 确保 IP 请求也能被还原为域名
   config.sniffer = {
     'enable': true,
     'sniff': {
