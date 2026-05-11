@@ -1,20 +1,23 @@
 function main(config) {
-  // 1. 极致起跳优化 (针对 TTFB 和首包响应)
-  config['tcp-concurrent'] = true;       // TCP 并发
-  config['fast-open'] = true;           // 开启 TCP Fast Open (减少握手往返)
-  config['read-buffer-size'] = 262144;  
+  // 1. 爆发力优化：强制内核在建立连接时更激进
+  config['tcp-concurrent'] = true;      // 开启 TCP 并发
+  config['fast-open'] = true;          // 开启 TCP Fast Open
+  config['read-buffer-size'] = 524288; // 回调到 512KB (针对 8K 大数据包优化)
   config['udp-timeout'] = 300;
+  
+  // 2. 节点与链路选择优化
   config['unified-delay'] = true;
+  config['find-process-mode'] = 'always';
 
-  // 2. DNS 极致加速
+  // 3. DNS 加速：极致精简
   config.dns = {
     'enable': true,
     'enhanced-mode': 'fake-ip',
     'fake-ip-range': '198.18.0.1/16',
     'ipv6': false,
     'prefer-h3': true,
-    'default-nameserver': ['223.5.5.5', '119.29.29.29'],
-    'proxy-server-nameserver': ['223.5.5.5'], // 节点解析直连化
+    'default-nameserver': ['223.5.5.5'],
+    'proxy-server-nameserver': ['223.5.5.5'],
     'nameserver': ['https://dns.google/dns-query#proxy'],
     'nameserver-policy': {
       'geosite:cn': ['https://dns.alidns.com/dns-query'],
@@ -22,18 +25,7 @@ function main(config) {
     }
   };
 
-  // 3. 嗅探逻辑精简
-  config.sniffer = {
-    'enable': true,
-    'sniff': {
-      'TLS': { 'ports': [443, 8443], 'override-destination': true },
-      'HTTP': { 'ports': [80, '8080-8880'], 'override-destination': true },
-      'QUIC': { 'ports': [443, 8443], 'override-destination': true }
-    },
-    'force-domain': ['googlevideo.com'] // 仅针对视频流强制还原，减少其他干扰
-  };
-
-  // 4. 规则置顶
+  // 4. 规则置顶：确保视频流路径最短
   if (!config['rule-providers']) config['rule-providers'] = {};
   config['rule-providers']['prevent_dns_leak'] = {
     type: "http",
@@ -45,11 +37,24 @@ function main(config) {
 
   const matchRule = config.rules.find(rule => rule.startsWith("MATCH"));
   const proxyName = matchRule ? matchRule.split(",").pop() : "DIRECT";
+  
+  // 增加强制视频流走代理的规则，防止嗅探导致的延迟
   config.rules = [
+    `DOMAIN-KEYWORD,googlevideo,${proxyName}`, 
     `RULE-SET,prevent_dns_leak,${proxyName}`,
     `AND,((DOMAIN-SUFFIX,github.com),(NETWORK,TCP)),${proxyName}`,
     ...config.rules
   ];
+
+  // 5. 嗅探逻辑优化
+  config.sniffer = {
+    'enable': true,
+    'sniff': {
+      'TLS': { 'ports': [443, 8443], 'override-destination': true },
+      'QUIC': { 'ports': [443, 8443], 'override-destination': true }
+    },
+    'force-domain': ['googlevideo.com']
+  };
 
   return config;
 }
