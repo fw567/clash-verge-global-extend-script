@@ -1,6 +1,13 @@
 function main(config) {
-  // 1. 规则集配置保持不变
+  // 1. 全局性能优化
+  config['unified-delay'] = true;   // 统一延迟计算
+  config['tcp-concurrent'] = true;  // TCP 并发连接，提升首屏速度
+  config['skip-proxy'] = ['localhost', '127.0.0.1', '::1', '192.168.*', '10.*'];
+
+  // 2. 填充 Rule Providers (包含去广告集)
   if (!config['rule-providers']) config['rule-providers'] = {};
+  
+  // 防泄露列表
   config['rule-providers']['prevent_dns_leak'] = {
     type: "http",
     interval: 86400,
@@ -9,13 +16,28 @@ function main(config) {
     url: "https://raw.githubusercontent.com/xishang0128/rules/main/clash%20or%20stash/prevent_dns_leak/prevent_dns_leak_domain.list"
   };
 
+  // 3. 提取代理组名称
   const matchRule = config.rules.find(rule => rule.startsWith("MATCH"));
-  const proxyName = matchRule ? matchRule.split(",").pop() : null;
-  if (proxyName) {
-    config.rules.unshift(`RULE-SET,prevent_dns_leak,${proxyName}`);
-  }
+  const proxyName = matchRule ? matchRule.split(",").pop() : "DIRECT";
 
-  // 2. DNS 进阶配置：使用 nameserver-policy 主导分流
+  // 4. 规则组合
+  const customRules = [
+    // 使用 REJECT-DROP 彻底屏蔽广告
+    'RULE-SET,prevent_dns_leak,' + proxyName, // 你原本的防泄露规则
+    
+    //逻辑规则示例：GitHub 强制走 TCP 且走代理，防止某些环境下 UDP 导致的连接重置
+    `AND,((DOMAIN-SUFFIX,github.com),(NETWORK,TCP)),${proxyName}`,
+    `AND,((DOMAIN-KEYWORD,github),(NETWORK,TCP)),${proxyName}`,
+
+    // 屏蔽特定运营商的劫持/测速域名 (使用 REJECT-DROP)
+    'DOMAIN-KEYWORD,adscore,REJECT-DROP',
+    'DOMAIN-KEYWORD,analytics,REJECT-DROP'
+  ];
+
+  // 将自定义规则插入到原规则的最前面
+  config.rules = [...customRules, ...config.rules];
+
+  // 5. 进阶 DNS 配置
   config.dns = {
     'enable': true,
     'enhanced-mode': 'fake-ip',
@@ -23,28 +45,15 @@ function main(config) {
     'ipv6': false,
     'prefer-h3': true,
     'default-nameserver': ['223.5.5.5', '119.29.29.29'],
-    
-    // 默认 DNS：作为兜底，走代理远端解析
+    'proxy-server-nameserver': ['223.5.5.5', '119.29.29.29'], // 节点解析加速
     'nameserver': [
       'https://dns.google/dns-query#proxy',
       'https://1.1.1.1/dns-query#proxy'
     ],
-
-    // 精准路由策略 (取代被动的 fallback-filter 逻辑)
     'nameserver-policy': {
-      // 明确是国内的走国内解析
-      'geosite:cn': [
-        'https://dns.alidns.com/dns-query',
-        'https://doh.pub/dns-query'
-      ],
-      // 明确是被墙的域名，强制只走代理端解析，不经过任何本地 DNS
-      'geosite:gfw,geolocation-!cn': [
-        'https://dns.google/dns-query#proxy',
-        'https://1.1.1.1/dns-query#proxy'
-      ]
+      'geosite:cn': ['https://dns.alidns.com/dns-query', 'https://doh.pub/dns-query'],
+      'geosite:gfw,geolocation-!cn': ['https://dns.google/dns-query#proxy', 'https://1.1.1.1/dns-query#proxy']
     },
-
-    // 虽然有了 policy，但 fallback-filter 依然建议保留作为最后的 IP 审计手段
     'fallback-filter': {
       'geoip': true,
       'geoip-code': 'CN',
@@ -53,6 +62,7 @@ function main(config) {
     'fake-ip-filter': ['*.lan', 'localhost.ptlogin2.qq.com', '+.stun.*.*', '+.msftconnecttest.com']
   };
 
+  // 6. 配置嗅探 (Sniffer)
   config.sniffer = {
     'enable': true,
     'sniff': {
